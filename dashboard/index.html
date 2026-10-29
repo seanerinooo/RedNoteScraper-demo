@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RedNote Scraper</title>
+<style>
+  /* Utilitarian control room: tight panels on a cool neutral, one red accent from RedNote itself. */
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --fg: #1b1e24; --muted: #646b78; --line: #dfe2e8;
+    --accent: #d93a3a; --s1: #d93a3a; --s2: #2f6fd1; --s3: #1c9a77; --s4: #c98a12;
+    --chart-muted: #c3c8d1; --ok: #15835f; --bad: #c62f2f; --overlay: rgba(244,245,247,.94);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --r: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121418; --panel: #1b1e24; --fg: #e8eaee; --muted: #9aa1ad; --line: #2c3039;
+      --accent: #f05a5a; --s1: #f05a5a; --s2: #5b93ee; --s3: #3cc39b; --s4: #e3a93a;
+      --chart-muted: #454b57; --ok: #3cc39b; --bad: #f06a6a; --overlay: rgba(18,20,24,.95);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 32px; }
+  header.top { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
+  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -.01em; }
+  h1 span { color: var(--accent); }
+  .lede { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+  h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .sec { display: flex; flex-direction: column; gap: 14px; }
+  .sec-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+  .sec-head p { margin: 4px 0 0; max-width: 72ch; }
+  .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .run-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; cursor: pointer; border-radius: 6px; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn { border: 1px solid var(--line); background: var(--panel); color: var(--fg); padding: 6px 12px; font-weight: 550; }
+  .btn:hover { border-color: var(--muted); }
+  .btn-run { background: var(--accent); border-color: var(--accent); color: #fff; display: inline-flex; gap: 6px; align-items: center; }
+  .btn-run:hover { filter: brightness(1.08); border-color: var(--accent); }
+  .btn-run::before { content: ""; border-left: 7px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 12px; font-size: 13px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+  .tile .lab { font-size: 12px; color: var(--muted); }
+  .tile .big { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .sub { margin: 0; font-size: 12px; color: var(--muted); }
+  .chart { position: relative; min-height: 200px; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { font-size: 11px; fill: var(--muted); font-family: var(--sans); }
+  .chart text.strong { fill: var(--fg); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+  .legend li { display: flex; gap: 5px; align-items: center; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+  .tip { position: absolute; z-index: 3; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 6px 9px; font-size: 12px; max-width: 280px; }
+  .tip .h { color: var(--muted); margin-bottom: 2px; }
+  .tip .r { display: flex; gap: 6px; align-items: center; }
+  .tip .v { margin-left: auto; padding-left: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .search { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); width: min(100%, 340px); }
+  .tbox { max-height: 30rem; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; z-index: 1; background: var(--panel); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; font-weight: 600; }
+  th button { all: unset; cursor: pointer; }
+  th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  th[aria-sort=descending] button::after { content: " ↓"; }
+  th[aria-sort=ascending] button::after { content: " ↑"; }
+  td { padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  td a { color: inherit; }
+  .n { text-align: right; }
+  td.wide { min-width: 12rem; }
+  td.hi { color: var(--ok); font-weight: 600; }
+  td.lo { color: var(--muted); }
+  td.empty { text-align: center; color: var(--muted); padding: 16px; }
+  .notice { background: var(--panel); border: 1px dashed var(--line); border-radius: var(--r); padding: 16px; color: var(--muted); }
+  .err { color: var(--bad); }
+  .terms { display: flex; flex-direction: column; gap: 12px; }
+  .tier { display: flex; flex-direction: column; gap: 6px; }
+  .tier-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 12px; color: var(--muted); }
+  .tier-head .tier-name { color: var(--fg); font-weight: 600; font-size: 13px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+  button.chip:not(:disabled):hover { border-color: var(--accent); }
+  .chip .c { font-size: 11px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip[aria-pressed=true] .c { color: #fff; }
+  .chip:disabled { cursor: default; color: var(--muted); border-style: dashed; }
+  .chip.big { font-size: 15px; padding: 5px 14px; font-weight: 600; }
+  .caveat { margin: 0; font-size: 12px; color: var(--fg); background: var(--bg); border-left: 3px solid var(--s4); padding: 6px 10px; border-radius: 0 6px 6px 0; }
+  .btn-small { align-self: flex-start; padding: 3px 10px; font-size: 12px; }
+  .filter-pill { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+  .head-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+  .lang button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 6px 12px; font-weight: 550; }
+  .lang button + button { border-left: 1px solid var(--line); }
+  .lang button[aria-pressed=true] { background: var(--fg); color: var(--bg); }
+  .demo-banner { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0; padding: 8px 12px; border: 1px solid var(--accent); border-radius: var(--r); background: var(--panel); font-size: 13px; }
+  .demo-banner b { color: var(--accent); }
+  .demo-banner .btn { padding: 3px 10px; font-size: 12px; }
+  @media (max-width: 720px) { .hide-narrow { display: none; } }
+
+  /* Loading screen shown while a scraper runs */
+  .overlay { position: fixed; inset: 0; z-index: 20; background: var(--overlay); display: flex; align-items: center; justify-content: center; padding: 16px; backdrop-filter: blur(3px); }
+  .run-card { width: min(100%, 760px); max-height: calc(100vh - 32px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.18); padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .run-head { display: flex; gap: 14px; align-items: center; }
+  .spinner { width: 34px; height: 34px; flex: none; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+  .run-icon { width: 34px; height: 34px; flex: none; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 18px; }
+  .run-icon.ok { background: var(--ok); }
+  .run-icon.bad { background: var(--bad); }
+  .run-title { font-size: 17px; font-weight: 600; margin: 0; }
+  .run-status { margin: 2px 0 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .progress { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; position: relative; }
+  .progress::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 35%; background: var(--accent); border-radius: 3px; animation: slide 1.4s ease-in-out infinite; }
+  .run-card.done .progress { display: none; }
+  .log { margin: 0; flex: 1; min-height: 180px; max-height: 50vh; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  .run-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; }
+  .run-actions .hint { margin-right: auto; font-size: 12px; color: var(--muted); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes slide { 0% { left: -35%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .spinner, .progress::after { animation-duration: 4s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>RedNote <span>scraper</span></h1>
+      <p class="lede" data-demo="Search RedNote (Xiaohongshu) for one term, kopitiam, and review what comes back: the creators worth contacting for a collaboration, and the posts getting the most engagement.">Run the scrapers and review what they found: tour agency and operator leads, and a competitor's posts on RedNote (Xiaohongshu).</p>
+    </div>
+    <div class="head-actions">
+      <div class="lang" id="lang" role="group" aria-label="Language of the results" hidden>
+        <button type="button" data-lang="en" aria-pressed="true">English</button>
+        <button type="button" data-lang="zh" aria-pressed="false">Original (中文)</button>
+      </div>
+      <button class="btn" id="reload" type="button">Reload results</button>
+    </div>
+  </header>
+  <p class="demo-banner" id="demo-banner" hidden>
+    <span><b>Demo mode.</b> Sample data only, and runs are simulated. Nothing is scraped.</span>
+    <button class="btn" type="button" id="demo-reset">Reset demo</button>
+  </p>
+
+  <section class="sec" id="leads">
+    <div class="sec-head">
+      <div>
+        <h2 data-demo="Kopitiam creators">Agency leads</h2>
+        <p id="lead-summary">Loading…</p>
+        <div class="meta" id="lead-file"></div>
+      </div>
+      <div class="run-bar">
+        <button class="btn btn-run" type="button" data-run="agencies" data-demo="Run creator scrape">Run agency scrape</button>
+      </div>
+    </div>
+    <div class="confirm" id="confirm-agencies" hidden>
+      <span data-demo="This opens MediaCrawler with your XHS_COOKIES and searches RedNote for kopitiam. It can take several minutes.">This opens MediaCrawler with your XHS_COOKIES and can take 30+ minutes. Keywords already crawled are skipped.</span>
+      <button class="btn btn-run" type="button" data-go="agencies">Start</button>
+      <button class="btn" type="button" data-cancel="agencies">Cancel</button>
+    </div>
+    <div class="card" id="lead-terms-card">
+      <h3>What this search looked for</h3>
+      <p class="sub" data-demo="The creator scraper searched RedNote for this term. The number on it is how many creators it found. Click it to filter the table.">The agency scraper searched RedNote for each term below, grouped by tier. The number on a term is how many creators it found. Click a term to list only those creators.</p>
+      <div class="terms" id="lead-terms"></div>
+      <button class="btn btn-small" id="lead-terms-all" type="button" hidden>Show all terms</button>
+    </div>
+    <div class="tiles" id="lead-tiles"></div>
+    <div class="grid">
+      <div class="card">
+        <h3>Lead score distribution</h3>
+        <p class="sub" data-demo="Creators per score. Food-creator words add 25, kopitiam focus 20, a contact route 15, openness to collabs 10. Scores of 50 or higher are highlighted.">Creators per score. Operator words add 25, group capability 20, contact route 15, commercial intent 10. Scores of 50 or higher are highlighted.</p>
+        <div class="chart" id="score-chart"></div>
+      </div>
+      <div class="card">
+        <h3>Most common signal words</h3>
+        <p class="sub">Creators whose captions use each word, top 12 across all four signal groups.</p>
+        <ul class="legend">
+          <li><span class="sw" style="background:var(--s1)"></span><span data-demo="Food creator">Operator</span></li>
+          <li><span class="sw" style="background:var(--s2)"></span><span data-demo="Kopitiam focus">Group</span></li>
+          <li><span class="sw" style="background:var(--s3)"></span><span data-demo="Contact route">Contact</span></li>
+          <li><span class="sw" style="background:var(--s4)"></span><span data-demo="Open to collabs">Commercial</span></li>
+        </ul>
+        <div class="chart" id="terms-chart"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>All leads</h3>
+      <p class="sub">Nicknames are masked by MediaCrawler. Open a creator's top note to reach their profile. Click a column to sort.</p>
+      <input id="lead-search" class="search" type="search" placeholder="Search names, keywords, signals, titles" aria-label="Search leads">
+      <div class="filter-pill" id="lead-filter" hidden>
+        <span>Showing creators found by <span class="chip" id="lead-filter-term"></span></span>
+        <button class="btn btn-small" type="button" id="lead-filter-clear">Show all creators</button>
+      </div>
+      <div class="tbox">
+        <table data-table="leads">
+          <thead><tr>
+            <th class="n" data-sort="score" data-num aria-sort="descending"><button type="button">Score</button></th>
+            <th data-sort="nickname"><button type="button">Creator</button></th>
+            <th data-sort="keywords"><button type="button">Found by</button></th>
+            <th class="n hide-narrow" data-sort="n_posts" data-num><button type="button">Posts</button></th>
+            <th class="n" data-sort="total_likes" data-num><button type="button">Likes</button></th>
+            <th data-sort="contact_signals"><button type="button">Contact</button></th>
+            <th class="hide-narrow" data-sort="operator_signals"><button type="button" data-demo="Creator type">Operator</button></th>
+            <th class="hide-narrow" data-sort="commercial_signals"><button type="button" data-demo="Collab">Commercial</button></th>
+            <th data-sort="latest_post"><button type="button">Latest post</button></th>
+            <th>Top note</th>
+          </tr></thead>
+          <tbody id="leads-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="kopi">
+    <div class="sec-head">
+      <div>
+        <h2 data-demo="Top kopitiam posts">Competitor posts</h2>
+        <p id="post-summary">Loading…</p>
+        <div class="meta" id="post-file"></div>
+      </div>
+      <div class="run-bar">
+        <button class="btn btn-run" type="button" data-run="kopi" data-demo="Run post scrape">Run competitor scrape</button>
+      </div>
+    </div>
+    <div class="confirm" id="confirm-kopi" hidden>
+      <span>This runs the Apify actor, which bills per result. Check MAX_RESULTS_PER_KEYWORD in the script first.</span>
+      <button class="btn btn-run" type="button" data-go="kopi">Start</button>
+      <button class="btn" type="button" data-cancel="kopi">Cancel</button>
+    </div>
+    <div class="card" id="post-terms-card">
+      <h3>What this search looked for</h3>
+      <p class="sub" data-demo="The post scraper searched RedNote for this keyword. Every post below came from it.">The competitor scraper searched RedNote for these keywords. Every post below came from one of them.</p>
+      <div class="chips" id="post-terms"></div>
+      <p class="sub" id="post-settings"></p>
+      <p class="sub" id="post-ran" hidden></p>
+      <p class="caveat" id="post-caveat" hidden>These are the current settings in scrape_oriental_kopi_rednote.py, not a record of the run that saved these results, so the results may come from different keywords. Run the scrape again to bring them in line.</p>
+    </div>
+    <div class="tiles" id="post-tiles"></div>
+    <div class="card">
+      <h3>Engagement per post</h3>
+      <p class="sub">Ranked by engagement score: likes + 2 × saves + 1.5 × comments + 1.5 × shares.</p>
+      <ul class="legend">
+        <li><span class="sw" style="background:var(--s1)"></span>Likes</li>
+        <li><span class="sw" style="background:var(--s2)"></span>Saves</li>
+        <li><span class="sw" style="background:var(--s3)"></span>Comments</li>
+        <li><span class="sw" style="background:var(--s4)"></span>Shares</li>
+      </ul>
+      <div class="chart" id="posts-chart"></div>
+    </div>
+    <div class="card">
+      <h3>All posts</h3>
+      <p class="sub">Click a column to sort.</p>
+      <div class="tbox">
+        <table data-table="posts">
+          <thead><tr>
+            <th>Post</th>
+            <th data-sort="author"><button type="button">Author</button></th>
+            <th class="n" data-sort="score" data-num aria-sort="descending"><button type="button">Score</button></th>
+            <th class="n" data-sort="likes" data-num><button type="button">Likes</button></th>
+            <th class="n hide-narrow" data-sort="collects" data-num><button type="button">Saves</button></th>
+            <th class="n hide-narrow" data-sort="comments" data-num><button type="button">Comments</button></th>
+            <th class="n hide-narrow" data-sort="shares" data-num><button type="button">Shares</button></th>
+            <th data-sort="time"><button type="button">Posted</button></th>
+          </tr></thead>
+          <tbody id="posts-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="overlay" id="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="run-title">
+  <div class="run-card" id="run-card">
+    <div class="run-head">
+      <div class="spinner" id="run-spinner"></div>
+      <div class="run-icon" id="run-icon" hidden></div>
+      <div>
+        <p class="run-title" id="run-title">Running</p>
+        <p class="run-status" id="run-status"></p>
+      </div>
+    </div>
+    <div class="progress"></div>
+    <pre class="log" id="run-log" aria-live="polite"></pre>
+    <div class="run-actions">
+      <span class="hint" id="run-hint"></span>
+      <button class="btn" type="button" id="run-stop">Stop</button>
+      <button class="btn btn-run" type="button" id="run-close" hidden>View results</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+const HIGH = 50;
+const COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)'];
+const fmt = new Intl.NumberFormat('en');
+const fmtScore = new Intl.NumberFormat('en', {maximumFractionDigits: 1});
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const day = (s) => { const d = new Date(String(s || '').slice(0, 10) + 'T00:00:00Z'); return isNaN(d) ? '' : d.toLocaleDateString('en', {month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'}); };
+const stamp = (s) => new Date(s).toLocaleString('en', {month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit'});
+const safeUrl = (u) => /^https:\/\/www\.xiaohongshu\.com\//.test(u || '') ? u : null;
+// Results language. Demo data carries an English version of every Chinese string;
+// real scrapes don't, so they always show as scraped.
+let LANG = 'en';
+const L = (s) => {
+  const dict = LANG === 'en' && window.DEMO_DATA && window.DEMO_DATA.i18n ? window.DEMO_DATA.i18n.en : null;
+  return dict && s && dict[s] != null ? dict[s] : s;
+};
+const Llist = (s) => String(s || '').split(',').map((t) => t.trim()).filter(Boolean).map(L).join(', ');
+const labelOf = (p) => {
+  const title = (p.title || '').trim();
+  if (title) return L(title);
+  const desc = (p.description || '').trim();
+  return desc ? L(desc).slice(0, 60) : 'Untitled';
+};
+
+let DATA = {leads: [], posts: []};
+let leadKeyword = null;
+let showAllTerms = false;
+const SORT_LABEL = {time_descending: 'Newest first', popularity_descending: 'Most popular first', general: 'Best match'};
+const NOTE_LABEL = {all: 'all note types', video: 'videos only', image: 'image notes only', live: 'live only'};
+const TIME_LABEL = {all: 'any date', '1d': 'past day', '1w': 'past week', '6mo': 'past 6 months'};
+const splitTerms = (s) => String(s || '').split(',').map((t) => t.trim()).filter(Boolean);
+const sortState = {leads: {key: 'score', dir: -1, num: true}, posts: {key: 'score', dir: -1, num: true}};
+
+// ---------- small DOM + SVG helpers ----------
+function el(tag, attrs = {}, text) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+}
+function svgEl(tag, attrs = {}, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+}
+function newSvg(box, W, H) {
+  const s = svgEl('svg', {viewBox: `0 0 ${W} ${H}`});
+  box.append(s);
+  return s;
+}
+function textWidth(svg, str) {
+  const t = svgEl('text', {}, str); svg.append(t);
+  const w = t.getComputedTextLength(); t.remove(); return w;
+}
+function niceMax(v) {
+  if (v <= 0) return 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p;
+  return v;
+}
+function tooltip(box) {
+  const t = el('div', {class: 'tip'}); t.hidden = true; box.append(t);
+  return {
+    show(ev, head, lines) {
+      t.replaceChildren(el('div', {class: 'h'}, head));
+      for (const [color, name, val] of lines) {
+        const r = el('div', {class: 'r'});
+        if (color) { const s = el('span', {class: 'sw'}); s.style.background = color; r.append(s); }
+        r.append(el('span', {}, name), el('span', {class: 'v'}, val));
+        t.append(r);
+      }
+      t.hidden = false;
+      const b = box.getBoundingClientRect(), px = ev.clientX - b.left, py = ev.clientY - b.top;
+      let x = px + 12, y = py + 12;
+      if (x + t.offsetWidth > box.clientWidth) x = Math.max(0, px - t.offsetWidth - 12);
+      if (y + t.offsetHeight > box.clientHeight) y = Math.max(0, py - t.offsetHeight - 12);
+      t.style.left = x + 'px'; t.style.top = y + 'px';
+    },
+    hide() { t.hidden = true; },
+  };
+}
+function emptyChart(box, msg) { box.replaceChildren(el('div', {class: 'notice'}, msg)); }
+
+// ---------- search terms ----------
+function renderLeadTerms() {
+  const box = $('#lead-terms');
+  box.replaceChildren();
+  const cfg = DATA.search && DATA.search.agencies;
+  const counts = new Map();
+  for (const r of DATA.leads) for (const k of splitTerms(r.keywords)) counts.set(k, (counts.get(k) || 0) + 1);
+  const tiers = (cfg && cfg.tiers ? cfg.tiers : []).map((t) => ({...t}));
+  // Terms in the results that the settings no longer list.
+  const known = new Set(tiers.flatMap((t) => t.keywords));
+  const extra = [...counts.keys()].filter((k) => !known.has(k));
+  if (extra.length) tiers.push({tier: null, name: 'Other terms in these results', sort: null, keywords: extra});
+  let unused = 0;
+  for (const t of tiers) {
+    const hits = t.keywords.filter((k) => counts.get(k));
+    unused += t.keywords.length - hits.length;
+    const shown = showAllTerms ? t.keywords : hits;
+    if (!shown.length) continue;
+    const head = el('div', {class: 'tier-head'});
+    head.append(el('span', {class: 'tier-name'}, t.tier ? `Tier ${t.tier} · ${t.name}` : t.name));
+    if (t.sort) head.append(el('span', {}, SORT_LABEL[t.sort] || t.sort));
+    head.append(el('span', {}, `${hits.length} of ${t.keywords.length} terms found creators`));
+    const chips = el('div', {class: 'chips'});
+    for (const k of shown) {
+      const n = counts.get(k) || 0;
+      const b = el('button', {type: 'button', class: 'chip', 'aria-pressed': String(leadKeyword === k)});
+      b.append(el('span', {}, k), el('span', {class: 'c'}, fmt.format(n)));
+      if (n) b.addEventListener('click', () => setLeadKeyword(leadKeyword === k ? null : k));
+      else b.disabled = true;
+      chips.append(b);
+    }
+    const row = el('div', {class: 'tier'});
+    row.append(head, chips);
+    box.append(row);
+  }
+  if (!box.children.length) box.append(el('p', {class: 'sub'}, DATA.leads.length ? 'Could not read the search terms.' : 'No results yet, so no terms have found creators.'));
+  const btn = $('#lead-terms-all');
+  btn.hidden = unused === 0;
+  btn.textContent = showAllTerms ? 'Hide terms with no creators' : `Show ${fmt.format(unused)} more terms with no creators in these results`;
+}
+
+function setLeadKeyword(k) {
+  leadKeyword = k;
+  $('#lead-filter').hidden = !k;
+  $('#lead-filter-term').textContent = k || '';
+  renderLeadTerms();
+  renderLeadTable();
+  if (k) $('#lead-filter').scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
+function renderPostTerms() {
+  const cfg = DATA.search && DATA.search.posts;
+  const box = $('#post-terms');
+  box.replaceChildren();
+  $('#post-ran').hidden = true;
+  $('#post-caveat').hidden = true;
+  if (!cfg || !Array.isArray(cfg.keywords)) { $('#post-settings').textContent = 'Could not read the search settings.'; return; }
+  for (const k of cfg.keywords) box.append(el('span', {class: 'chip big'}, k));
+  $('#post-settings').textContent = [SORT_LABEL[cfg.sort] || cfg.sort,
+    cfg.max_results ? `up to ${fmt.format(cfg.max_results)} posts per keyword` : 'every post found',
+    NOTE_LABEL[cfg.note_type] || cfg.note_type, TIME_LABEL[cfg.time_filter] || cfg.time_filter].filter(Boolean).join(' · ');
+  if (cfg.source === 'run') {
+    $('#post-ran').textContent = `Recorded from the run on ${stamp(cfg.ran_at)} that saved these results.`;
+    $('#post-ran').hidden = false;
+  } else if (DATA.posts.length) {
+    $('#post-caveat').hidden = false;
+  }
+}
+$('#lead-terms-all').addEventListener('click', () => { showAllTerms = !showAllTerms; renderLeadTerms(); });
+$('#lead-filter-clear').addEventListener('click', () => setLeadKeyword(null));
+
+// ---------- leads ----------
+function renderLeads() {
+  const rows = DATA.leads;
+  const f = DATA.leads_file;
+  $('#lead-file').textContent = f ? `${f.name} · updated ${stamp(f.modified)}` : '';
+  if (leadKeyword && !DATA.leads.some((r) => splitTerms(r.keywords).includes(leadKeyword))) { leadKeyword = null; $('#lead-filter').hidden = true; }
+  renderLeadTerms();
+  if (!rows.length) {
+    $('#lead-summary').textContent = 'No agency results yet. Run the agency scrape to collect leads.';
+    $('#lead-tiles').replaceChildren();
+    emptyChart($('#score-chart'), 'No leads to chart.');
+    emptyChart($('#terms-chart'), 'No leads to chart.');
+    renderLeadTable();
+    return;
+  }
+  const contact = rows.filter((r) => (r.contact_signals || '').trim()).length;
+  const high = rows.filter((r) => num(r.score) >= HIGH).length;
+  const multi = rows.filter((r) => num(r.n_posts) > 1).length;
+  $('#lead-summary').replaceChildren(
+    ...(() => { const n = new Set(rows.flatMap((r) => splitTerms(r.keywords))).size; return [el('b', {}, fmt.format(n)), n === 1 ? ' search term found ' : ' search terms found ']; })(),
+    el('b', {}, fmt.format(rows.length)), ' creators. ', el('b', {}, fmt.format(contact)), ' of them',
+    ' mention a contact route, and ', el('b', {}, fmt.format(high)),
+    ` score ${HIGH} or higher. Start outreach with those.`);
+  tiles($('#lead-tiles'), [['Creators found', rows.length], [`Score ${HIGH} or higher`, high], ['Mention a contact route', contact], ['Posted more than once', multi]]);
+  scoreChart(rows);
+  termsChart(rows);
+  renderLeadTable();
+}
+
+function tiles(box, items) {
+  box.replaceChildren(...items.map(([lab, v]) => {
+    const t = el('div', {class: 'tile'});
+    t.append(el('span', {class: 'lab'}, lab), el('span', {class: 'big'}, fmt.format(v)));
+    return t;
+  }));
+}
+
+function scoreChart(rows) {
+  const box = $('#score-chart'); box.replaceChildren();
+  const m = new Map();
+  for (const r of rows) { const s = num(r.score); m.set(s, (m.get(s) || 0) + 1); }
+  const bins = [...m].sort((a, b) => a[0] - b[0]).map(([score, leads]) => ({score, leads}));
+  const W = Math.max(280, box.clientWidth), H = 220, top = 18, bottom = H - 26;
+  const svg = newSvg(box, W, H);
+  const max = niceMax(Math.max(...bins.map((b) => b.leads)));
+  const ticks = [0, max / 4, max / 2, max * 3 / 4, max].filter((t) => Number.isInteger(t));
+  const left = Math.ceil(Math.max(...ticks.map((t) => textWidth(svg, fmt.format(t))))) + 10;
+  const y = (v) => bottom - (v / max) * (bottom - top);
+  for (const t of ticks) {
+    svg.append(svgEl('line', {x1: left, x2: W - 4, y1: y(t), y2: y(t), stroke: 'var(--line)'}));
+    svg.append(svgEl('text', {x: left - 6, y: y(t), dy: '0.32em', 'text-anchor': 'end'}, fmt.format(t)));
+  }
+  const step = (W - 4 - left) / bins.length, bw = Math.min(32, step * 0.75);
+  const tip = tooltip(box);
+  const every = step < 22 ? 2 : 1;
+  bins.forEach((b, i) => {
+    const cx = left + step * (i + 0.5);
+    const r = svgEl('rect', {x: cx - bw / 2, width: bw, y: y(b.leads), height: bottom - y(b.leads), rx: 3,
+      fill: b.score >= HIGH ? 'var(--accent)' : 'var(--chart-muted)'});
+    r.addEventListener('pointermove', (ev) => tip.show(ev, `Score ${b.score}`, [[null, 'Creators', fmt.format(b.leads)]]));
+    r.addEventListener('pointerleave', () => tip.hide());
+    svg.append(r);
+    svg.append(svgEl('text', {x: cx, y: y(b.leads) - 4, 'text-anchor': 'middle', class: 'strong'}, fmt.format(b.leads)));
+    if (i % every === 0) svg.append(svgEl('text', {x: cx, y: H - 8, 'text-anchor': 'middle'}, b.score));
+  });
+}
+
+function termsChart(rows) {
+  const box = $('#terms-chart'); box.replaceChildren();
+  const groups = DEMO
+    ? [['operator_signals', 'Food creator'], ['group_signals', 'Kopitiam focus'], ['contact_signals', 'Contact route'], ['commercial_signals', 'Open to collabs']]
+    : [['operator_signals', 'Operator'], ['group_signals', 'Group'], ['contact_signals', 'Contact'], ['commercial_signals', 'Commercial']];
+  const m = new Map();
+  for (const r of rows) groups.forEach(([col, name], gi) => {
+    for (const term of new Set((r[col] || '').split(',').map((s) => s.trim()).filter(Boolean))) {
+      const k = col + '|' + term;
+      const o = m.get(k) || {term, name, gi, leads: 0};
+      o.leads += 1; m.set(k, o);
+    }
+  });
+  const top = [...m.values()].sort((a, b) => b.leads - a.leads).slice(0, 12);
+  if (!top.length) { emptyChart(box, 'No signal words found.'); return; }
+  const W = Math.max(280, box.clientWidth), rowH = 24, H = top.length * rowH + 4;
+  const svg = newSvg(box, W, H);
+  const left = Math.ceil(Math.max(...top.map((t) => textWidth(svg, L(t.term))))) + 10;
+  const right = Math.ceil(Math.max(...top.map((t) => textWidth(svg, fmt.format(t.leads))))) + 8;
+  const max = Math.max(...top.map((t) => t.leads));
+  const x = (v) => left + (v / max) * (W - right - left);
+  const tip = tooltip(box);
+  top.forEach((t, i) => {
+    const y0 = i * rowH + 2;
+    svg.append(svgEl('text', {x: left - 8, y: y0 + rowH / 2 - 2, dy: '0.32em', 'text-anchor': 'end', class: 'strong'}, L(t.term)));
+    const r = svgEl('rect', {x: left, y: y0 + 4, height: rowH - 12, rx: 3, width: Math.max(1, x(t.leads) - left), fill: COLORS[t.gi]});
+    r.addEventListener('pointermove', (ev) => tip.show(ev, L(t.term), [[COLORS[t.gi], t.name, fmt.format(t.leads) + ' creators']]));
+    r.addEventListener('pointerleave', () => tip.hide());
+    svg.append(r);
+    svg.append(svgEl('text', {x: x(t.leads) + 6, y: y0 + rowH / 2 - 2, dy: '0.32em'}, fmt.format(t.leads)));
+  });
+}
+
+// ---------- posts ----------
+function renderPosts() {
+  const rows = DATA.posts;
+  const f = DATA.posts_file;
+  $('#post-file').textContent = f ? `${f.name} · updated ${stamp(f.modified)}` : '';
+  renderPostTerms();
+  if (!rows.length) {
+    $('#post-summary').textContent = 'No competitor results yet. Run the competitor scrape to collect posts.';
+    $('#post-tiles').replaceChildren();
+    emptyChart($('#posts-chart'), 'No posts to chart.');
+    renderPostTable();
+    return;
+  }
+  const best = rows.reduce((a, b) => (num(b.score) > num(a.score) ? b : a));
+  $('#post-summary').replaceChildren('The top post, ', el('b', {}, labelOf(best)), ' by ', el('b', {}, best.author || 'unknown'),
+    ', has an engagement score of ', el('b', {}, fmtScore.format(num(best.score))), '.');
+  const sum = (k) => rows.reduce((s, p) => s + num(p[k]), 0);
+  tiles($('#post-tiles'), [['Posts scraped', rows.length], ['Likes', sum('likes')], ['Saves', sum('collects')], ['Shares', sum('shares')]]);
+  postsChart(rows);
+  renderPostTable();
+}
+
+function postsChart(rows) {
+  const box = $('#posts-chart'); box.replaceChildren();
+  const parts = [['likes', 'Likes'], ['collects', 'Saves'], ['comments', 'Comments'], ['shares', 'Shares']];
+  const data = rows.map((p) => ({label: labelOf(p), author: p.author, score: num(p.score), vals: parts.map(([k]) => num(p[k]))}))
+    .sort((a, b) => b.score - a.score);
+  const W = Math.max(280, box.clientWidth), rowH = 40, H = data.length * rowH;
+  const svg = newSvg(box, W, H);
+  const max = Math.max(...data.map((d) => d.vals.reduce((a, b) => a + b, 0))) || 1;
+  const x = (v) => (v / max) * W;
+  const tip = tooltip(box);
+  data.forEach((d, i) => {
+    const g = svgEl('g', {transform: `translate(0,${i * rowH})`});
+    svg.append(g);
+    const scoreText = 'Score ' + fmtScore.format(d.score);
+    const sw = textWidth(svg, scoreText);
+    g.append(svgEl('text', {x: W, y: 13, 'text-anchor': 'end'}, scoreText));
+    const lab = svgEl('text', {x: 0, y: 13, class: 'strong'}, d.label);
+    g.append(lab);
+    let s = d.label;
+    while (s.length > 1 && lab.getComputedTextLength() > W - sw - 16) { s = s.slice(0, -1); lab.textContent = s + '…'; }
+    let acc = 0;
+    d.vals.forEach((v, j) => {
+      g.append(svgEl('rect', {x: x(acc), y: 20, height: 12, rx: 2, width: Math.max(0, x(acc + v) - x(acc) - (v ? 1 : 0)), fill: COLORS[j]}));
+      acc += v;
+    });
+    const hit = svgEl('rect', {x: 0, y: 0, width: W, height: rowH, fill: 'transparent'});
+    hit.addEventListener('pointermove', (ev) => tip.show(ev, `${d.label} · ${d.author}`, parts.map(([, n], j) => [COLORS[j], n, fmt.format(d.vals[j])])));
+    hit.addEventListener('pointerleave', () => tip.hide());
+    g.append(hit);
+  });
+}
+
+// ---------- tables ----------
+function sortRows(rows, s) {
+  return rows.slice().sort((a, b) => s.num ? s.dir * (num(a[s.key]) - num(b[s.key]))
+    : s.dir * Llist(a[s.key]).localeCompare(Llist(b[s.key])));
+}
+function td(tr, text, cls) { const c = el('td', cls ? {class: cls} : {}, text); tr.append(c); return c; }
+function linkTd(tr, text, url, cls) {
+  const c = el('td', cls ? {class: cls} : {});
+  const safe = safeUrl(url);
+  if (safe) c.append(el('a', {href: safe, target: '_blank', rel: 'noopener noreferrer'}, text)); else c.textContent = text;
+  tr.append(c);
+}
+function emptyRow(tb, cols, text) { const tr = el('tr'); const c = td(tr, text, 'empty'); c.colSpan = cols; tb.append(tr); }
+
+function renderLeadTable() {
+  const tb = $('#leads-body'); tb.replaceChildren();
+  const q = $('#lead-search').value.trim().toLowerCase();
+  const rows = sortRows(DATA.leads.filter((r) => (!leadKeyword || splitTerms(r.keywords).includes(leadKeyword)) && (!q || [r.nickname, r.keywords, r.operator_signals, r.group_signals, r.contact_signals, r.commercial_signals, r.top_note_title]
+    .flatMap((v) => [v, Llist(v)]).join(' ').toLowerCase().includes(q))), sortState.leads);
+  if (!rows.length) { emptyRow(tb, 10, DATA.leads.length ? 'No leads match that search.' : 'No leads yet.'); return; }
+  for (const r of rows) {
+    const tr = el('tr'), s = num(r.score);
+    td(tr, r.score, 'n ' + (s >= HIGH ? 'hi' : s <= 0 ? 'lo' : ''));
+    td(tr, L(r.nickname));
+    td(tr, Llist(r.keywords));
+    td(tr, fmt.format(num(r.n_posts)), 'n hide-narrow');
+    td(tr, fmt.format(num(r.total_likes)), 'n');
+    td(tr, Llist(r.contact_signals));
+    td(tr, Llist(r.operator_signals), 'hide-narrow');
+    td(tr, Llist(r.commercial_signals), 'hide-narrow');
+    td(tr, day(r.latest_post));
+    linkTd(tr, L(r.top_note_title) || 'Open note', r.top_note_url, 'wide');
+    tb.append(tr);
+  }
+}
+
+function renderPostTable() {
+  const tb = $('#posts-body'); tb.replaceChildren();
+  if (!DATA.posts.length) { emptyRow(tb, 8, 'No posts yet.'); return; }
+  for (const p of sortRows(DATA.posts, sortState.posts)) {
+    const tr = el('tr');
+    linkTd(tr, labelOf(p), p.url, 'wide');
+    td(tr, p.author);
+    td(tr, fmtScore.format(num(p.score)), 'n');
+    td(tr, fmt.format(num(p.likes)), 'n');
+    td(tr, fmt.format(num(p.collects)), 'n hide-narrow');
+    td(tr, fmt.format(num(p.comments)), 'n hide-narrow');
+    td(tr, fmt.format(num(p.shares)), 'n hide-narrow');
+    td(tr, day(p.time));
+    tb.append(tr);
+  }
+}
+
+document.querySelectorAll('table[data-table]').forEach((tbl) => {
+  const which = tbl.dataset.table;
+  tbl.querySelectorAll('th[data-sort] button').forEach((btn) => btn.addEventListener('click', () => {
+    const th = btn.closest('th'), s = sortState[which], isNum = th.hasAttribute('data-num');
+    if (s.key === th.dataset.sort) s.dir *= -1; else Object.assign(s, {key: th.dataset.sort, dir: isNum ? -1 : 1, num: isNum});
+    tbl.querySelectorAll('th').forEach((o) => o.removeAttribute('aria-sort'));
+    th.setAttribute('aria-sort', s.dir > 0 ? 'ascending' : 'descending');
+    which === 'leads' ? renderLeadTable() : renderPostTable();
+  }));
+});
+$('#lead-search').addEventListener('input', renderLeadTable);
+
+// ---------- data ----------
+// Demo mode: anywhere but the local server (e.g. GitHub Pages), or with ?demo.
+// It shows made-up data from demo-data.js and simulates runs.
+const DEMO = new URLSearchParams(location.search).has('demo') || !['127.0.0.1', 'localhost'].includes(location.hostname);
+let demoSnapshot = 'before';
+
+function loadDemoScript() {
+  return new Promise((resolve, reject) => {
+    if (window.DEMO_DATA) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'demo-data.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('demo-data.js is missing. Run dashboard/make_demo_data.py'));
+    document.head.append(s);
+  });
+}
+
+async function loadData() {
+  try {
+    if (DEMO) {
+      await loadDemoScript();
+      DATA = window.DEMO_DATA[demoSnapshot];
+    } else {
+      const res = await fetch('/api/data');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      DATA = body;
+    }
+  } catch (e) {
+    $('#lead-summary').replaceChildren(el('span', {class: 'err'}, `Could not load results: ${e.message}. Is dashboard/server.py running?`));
+    $('#post-summary').textContent = '';
+    return;
+  }
+  renderLeads();
+  renderPosts();
+}
+$('#reload').addEventListener('click', loadData);
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (DATA.leads.length) { scoreChart(DATA.leads); termsChart(DATA.leads); } if (DATA.posts.length) postsChart(DATA.posts); }, 150); });
+
+// ---------- running a scraper ----------
+let poll = null;
+const post = (path) => fetch(path, {method: 'POST', headers: {'X-Dashboard': '1'}});
+
+document.querySelectorAll('[data-run]').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.confirm').forEach((c) => { c.hidden = true; });
+  $('#confirm-' + b.dataset.run).hidden = false;
+}));
+document.querySelectorAll('[data-cancel]').forEach((b) => b.addEventListener('click', () => { $('#confirm-' + b.dataset.cancel).hidden = true; }));
+document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', async () => {
+  $('#confirm-' + b.dataset.go).hidden = true;
+  if (DEMO) { demoRun(b.dataset.go); return; }
+  const res = await post('/api/run/' + b.dataset.go);
+  const body = await res.json();
+  if (!res.ok) { showOverlay(); finishView(false, body.error || 'Could not start the scraper.'); return; }
+  watch(body);
+}));
+
+function elapsed(s) {
+  const end = s.running ? s.now : (s.finished || s.now);
+  const sec = Math.max(0, Math.round(end - s.started));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}
+
+function showOverlay() {
+  $('#overlay').hidden = false;
+  document.querySelectorAll('[data-run]').forEach((b) => { b.disabled = true; });
+}
+
+function updateRun(s) {
+  if (!s.job) {
+    // The server restarted since this run began, so it has no record of it.
+    $('#run-title').textContent = 'Run no longer tracked';
+    finishView(false, 'The dashboard server was restarted, so this run was lost. Start it again if you still need it.');
+    return;
+  }
+  $('#run-title').textContent = s.running ? `Running ${s.label}` : `${s.label}`;
+  const log = $('#run-log');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+  log.textContent = s.log.length ? s.log.join('\n') : 'Starting…';
+  if (atBottom) log.scrollTop = log.scrollHeight;
+  if (s.running) {
+    $('#run-status').textContent = `Elapsed ${elapsed(s)}`;
+    $('#run-hint').textContent = s.job === 'agencies' ? 'MediaCrawler may open a browser window. Leave it open.' : 'Waiting on the Apify actor.';
+  } else if (s.stopped) {
+    finishView(false, `Stopped after ${elapsed(s)}. Anything saved before stopping is kept.`);
+  } else if (s.returncode === 0) {
+    finishView(true, `Finished in ${elapsed(s)}.`);
+  } else {
+    finishView(false, `Exited with code ${s.returncode} after ${elapsed(s)}. See the log above.`);
+  }
+}
+
+function finishView(ok, msg) {
+  clearInterval(poll); poll = null;
+  $('#run-card').classList.add('done');
+  $('#run-spinner').hidden = true;
+  const icon = $('#run-icon');
+  icon.hidden = false; icon.className = 'run-icon ' + (ok ? 'ok' : 'bad'); icon.textContent = ok ? '✓' : '!';
+  $('#run-status').textContent = msg;
+  $('#run-hint').textContent = '';
+  $('#run-stop').hidden = true;
+  $('#run-close').hidden = false;
+  $('#run-close').textContent = ok ? 'View results' : 'Close';
+  $('#run-close').focus();
+}
+
+function resetRunView(initial) {
+  $('#run-card').classList.remove('done');
+  $('#run-spinner').hidden = false;
+  $('#run-icon').hidden = true;
+  $('#run-stop').hidden = false;
+  $('#run-stop').disabled = false;
+  $('#run-close').hidden = true;
+  showOverlay();
+  updateRun(initial);
+  clearInterval(poll);
+}
+
+function watch(initial) {
+  resetRunView(initial);
+  let misses = 0;
+  poll = setInterval(async () => {
+    try {
+      const s = await (await fetch('/api/status')).json();
+      misses = 0;
+      updateRun(s);
+    } catch {
+      misses += 1;
+      if (misses >= 10) finishView(false, 'Lost contact with the dashboard server. Start it again with venv/bin/python dashboard/server.py, then reload this page.');
+      else $('#run-status').textContent = 'Lost contact with the dashboard server. Retrying…';
+    }
+  }, 1000);
+}
+
+// ---------- simulated runs for demo mode ----------
+let demoState = null;
+
+function demoLog(job) {
+  const after = window.DEMO_DATA.after;
+  if (job === 'agencies') {
+    const tier = after.search.agencies.tiers[0];
+    const kw = tier.keywords[0];
+    const lines = [[0.4, 'Resuming: 0 keyword(s) already on disk will be skipped.'],
+      [1.0, ''], [1.0, `=== 1 keyword: ${kw}, sort=${tier.sort} ===`],
+      [1.6, 'Running MediaCrawler... (may take a few min)'],
+      [2.4, `[XiaoHongShuCrawler.search] Current search keyword: ${kw}`]];
+    let t = 3.0;
+    for (let page = 1; page <= 10; page++) {
+      lines.push([t, `[XiaoHongShuCrawler.search] ${kw} page ${page}: ${16 + (page * 7) % 5} notes`]);
+      t += 0.9;
+    }
+    lines.push([t, ''], [t, `Loaded ${after.leads.length * 3} unique notes from MediaCrawler output.`]);
+    lines.push([t + 0.6, `Saved ${after.leads.length} creators -> agencies.csv`], [t + 0.8, ''], [t + 0.8, 'Top 10 creators (2+ signal categories = strong lead):']);
+    after.leads.slice(0, 10).forEach((r, i) => lines.push([t + 1 + i * 0.08,
+      `[${r.score.padStart(3)}] ${L(r.nickname)}  tiers ${r.tiers}  posts ${r.n_posts}  likes ${r.top_likes}`]));
+    return lines;
+  }
+  const ps = after.search.posts;
+  const lines = [[0.4, `Searching RedNote for: ${JSON.stringify(ps.keywords)} (maxResults=${ps.max_results}/keyword)...`],
+    [1.2, 'Actor run started: zen-studio/rednote-search-scraper'], [3.0, 'Status: RUNNING (12 results so far)'],
+    [5.5, 'Status: RUNNING (27 results so far)'], [7.5, 'Status: SUCCEEDED'],
+    [8.0, `Got ${after.posts.length} raw items back.`], [8.6, `Saved ${after.posts.length} posts -> oriental_kopi_search.csv / .json`], [8.8, '']];
+  after.posts.slice(0, 5).forEach((p, i) => {
+    lines.push([9 + i * 0.15, `[${Math.round(num(p.score))}] ${labelOf(p)}`]);
+    lines.push([9 + i * 0.15, `    likes ${p.likes} | collects ${p.collects} | comments ${p.comments}`]);
+  });
+  return lines;
+}
+
+function demoStatus() {
+  const s = demoState, now = Date.now() / 1000, t = now - s.started;
+  const done = !s.stopped && t >= s.end;
+  if (done && s.finished == null) { s.finished = s.started + s.end; s.returncode = 0; demoSnapshot = 'after'; }
+  return {running: !s.stopped && !done, job: s.job, label: s.label, started: s.started, finished: s.finished,
+    returncode: s.returncode, stopped: s.stopped, now, log: s.lines.filter(([at]) => at <= t).map(([, l]) => l)};
+}
+
+async function demoRun(job) {
+  await loadDemoScript();
+  const lines = demoLog(job);
+  demoState = {job, label: job === 'agencies' ? 'Kopitiam creators' : 'Kopitiam posts', started: Date.now() / 1000,
+    lines, end: lines[lines.length - 1][0] + 0.8, stopped: false, finished: null, returncode: null};
+  resetRunView(demoStatus());
+  poll = setInterval(() => updateRun(demoStatus()), 250);
+}
+
+$('#run-stop').addEventListener('click', async () => {
+  $('#run-stop').disabled = true;
+  if (DEMO) { if (demoState) { demoState.stopped = true; demoState.finished = Date.now() / 1000; } return; }
+  await post('/api/stop');
+});
+$('#demo-reset').addEventListener('click', () => { demoSnapshot = 'before'; loadData(); });
+document.querySelectorAll('#lang [data-lang]').forEach((b) => b.addEventListener('click', () => {
+  LANG = b.dataset.lang;
+  document.querySelectorAll('#lang [data-lang]').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+  renderLeads();
+  renderPosts();
+}));
+
+if (DEMO) {
+  $('#demo-banner').hidden = false;
+  $('#lang').hidden = false;
+  document.querySelectorAll('[data-demo]').forEach((e) => { e.textContent = e.dataset.demo; });
+}
+$('#run-close').addEventListener('click', () => {
+  $('#overlay').hidden = true;
+  document.querySelectorAll('[data-run]').forEach((b) => { b.disabled = false; });
+  loadData();
+});
+
+// On load, pick up a run that is already going (for example after a page refresh).
+(async () => {
+  await loadData();
+  if (DEMO) return;
+  try {
+    const s = await (await fetch('/api/status')).json();
+    if (s.running) watch(s);
+  } catch {}
+})();
+</script>
+</body>
+</html>

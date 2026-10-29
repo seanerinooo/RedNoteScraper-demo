@@ -1,0 +1,7 @@
+apify-client
+python-dotenv
+anthropic
+requests
+
+# For scraping, run python3 scrape_oriental_kopi_rednote.py 
+# For analysis and sending, run python3 analyze_and_send.py oriental_kopi_search.csv --top-n 10
